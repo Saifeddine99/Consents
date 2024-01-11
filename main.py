@@ -1,10 +1,15 @@
+from sending import send
+from verification import previous_decision
+
 import pymongo as py
+
+from encrypt import encrypt_data
+from decrypt import decrypt_data
+
 #-----------------------------------------------------------------------------
 myclient=py.MongoClient("mongodb://localhost:27017")
 #relating data to "demographic_database"
 demographic_data_coll=myclient["Demographic_database"]["Demographic data"]
-#Consents collection:
-consents_coll=myclient["Consents"]["Consents Collection"]
 #-----------------------------------------------------------------------------
 import streamlit as st
 st.set_page_config(page_title="Consents", page_icon=":bell:", layout="centered")
@@ -25,15 +30,19 @@ with col3:
     phone_number=st.text_input("enter your phone number here:", )
 
 if phone_number:
-    demog_data=demographic_data_coll.find_one({"phone number":phone_number})
-    if demog_data:
-        uuid=demog_data["uuid"]
-        phone_number_db=demog_data["phone number"]
+    #Here, we'll be checking the existence of this phone number on our database.
+    encrypted_phone_number=encrypt_data(phone_number)
+    demog_data=demographic_data_coll.find_one({"phone number": encrypted_phone_number})
 
-        patient_name=demog_data["demographic data"]["identities"][0]["details"]["items"][0]["value"]["value"]
-        patient_surname=demog_data["demographic data"]["identities"][0]["details"]["items"][1]["value"]["value"]
+    if demog_data:
+        #Here, it means that the phone number really exists! So, we'll be extracting some data.
+        uuid = demog_data["uuid"]
+        phone_number_db = decrypt_data(demog_data["phone number"])
+
+        patient_name = decrypt_data(demog_data["demographic data"]["identities"][0]["details"]["items"][0]["value"]["value"])
+        patient_surname = decrypt_data(demog_data["demographic data"]["identities"][0]["details"]["items"][1]["value"]["value"])
         gender="Mrs"
-        patient_gender=demog_data["demographic data"]["details"]["items"][0]["items"][4]["value"]["value"]
+        patient_gender = decrypt_data(demog_data["demographic data"]["details"]["items"][0]["items"][4]["value"]["value"])
         if patient_gender=="MALE":
             gender="Mr"
 
@@ -59,22 +68,29 @@ if phone_number:
         with colb:
             done = st.button('Submit')
 
-        if done:    
-            existance=consents_coll.find_one({"uuid":uuid})    
+        if done:
+            prev_decision=previous_decision(patient_name,uuid)
+
             if decision=="YES":
-                if existance:
-                    st.info("You're already existing in our database!")
+                if prev_decision=="YES":
+                    st.info("You're already sharing your data!")
                 else:
-                    consents_coll.insert_one({"uuid":uuid})
-                    st.success(" : You're successfully added to our database!",icon="✅")
+                    #Here there is an update in decision. So, we'll be sending the new decision to BlockChain.
+                    st.success(" : Your data will be shared!",icon="✅")
+                    send(patient_name,uuid,decision)
+                    
             else:
-                if existance:
-                    consents_coll.delete_many({"uuid":uuid})
-                
-                st.success(" : Your data will not be shared",icon="✅")
+                if prev_decision=="NO":
+                    st.info("You're already not sharing your data!")
+                else:
+                    #Here there is an update in decision. So, we'll be sending the new decision to BlockChain.
+                    st.success(" : Your data will not be shared",icon="✅")
+                    send(patient_name,uuid,decision)
+                    
 
 
     else:
+        #Here, we're in the case of invalid phone number. So the user can't submit any decision
         st.write("#")
         st.warning(": Invalid phone number",icon="⛔")
 
